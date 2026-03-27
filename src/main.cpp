@@ -43,6 +43,12 @@ uint8_t grid[GRID_H][GRID_W];
 // --- Gravity ---
 float gravX = 0.0f;
 float gravY = 1.0f;
+float gravMag = 1.0f;  // filtered tilt magnitude
+
+// Threshold below which the sand is fully frozen (flat position)
+#define GRAVITY_DEADZONE 0.12f
+// Threshold above which the sand moves at full speed
+#define GRAVITY_FULL     0.40f
 
 // 8 directions: S, SE, E, NE, N, NW, W, SW
 const int8_t DIR_DX[] = { 0,  1,  1,  1,  0, -1, -1, -1};
@@ -132,12 +138,12 @@ void readAccelerometer() {
     // Low-pass filter
     gravX = gravX * 0.7f + rawGX * 0.3f;
     gravY = gravY * 0.7f + rawGY * 0.3f;
+    gravMag = sqrtf(gravX * gravX + gravY * gravY);
 }
 
 void updateGravityDir() {
-    float mag = sqrtf(gravX * gravX + gravY * gravY);
-    if (mag < 0.1f) {
-        primaryDir = 0;
+    if (gravMag < GRAVITY_DEADZONE) {
+        // Screen is flat: keep current direction but sand won't move (handled in simulateSand)
         return;
     }
     float angle = atan2f(gravX, gravY);
@@ -196,12 +202,25 @@ void simulateSand() {
         else           { xStart = GRID_W - 1; xEnd = -1; xStep = -1; }
     }
 
+    // Friction: probability of a grain moving this frame (0-100)
+    // Below deadzone: frozen. Between deadzone and full: gradual. Above full: always moves.
+    int moveChance;
+    if (gravMag < GRAVITY_DEADZONE) {
+        return; // fully frozen, skip simulation entirely
+    } else if (gravMag >= GRAVITY_FULL) {
+        moveChance = 100;
+    } else {
+        float t = (gravMag - GRAVITY_DEADZONE) / (GRAVITY_FULL - GRAVITY_DEADZONE);
+        moveChance = (int)(t * t * 100.0f); // quadratic ramp for natural feel
+    }
+
     tft.startWrite();
 
     for (int y = yStart; y != yEnd; y += yStep) {
         for (int x = xStart; x != xEnd; x += xStep) {
             uint8_t val = grid[y][x];
             if (val == 0) continue;
+            if (moveChance < 100 && (int)random(100) >= moveChance) continue;
 
             // Try primary gravity direction
             int nx = x + dx_p;
