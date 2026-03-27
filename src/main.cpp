@@ -34,11 +34,12 @@
 #define OBSTACLE_BRUSH  1  // Obstacle brush radius in grid cells
 
 // UI Button layout (screen pixels, stacked top-left)
-#define BTN_SIZE   12
-#define BTN_X      2
-#define BTN_SAND_Y 2
-#define BTN_OBS_Y  (BTN_SAND_Y + BTN_SIZE + 3)
-#define BTN_RST_Y  (BTN_OBS_Y  + BTN_SIZE + 3)
+#define BTN_SIZE    15
+#define BTN_X       2
+#define BTN_SAND_Y  2
+#define BTN_CLR_Y   (BTN_SAND_Y + BTN_SIZE + 3)
+#define BTN_OBS_Y   (BTN_CLR_Y  + BTN_SIZE + 3)
+#define BTN_ERASE_Y (BTN_OBS_Y  + BTN_SIZE + 3)
 
 // --- Objects ---
 TFT_eSPI tft;
@@ -78,7 +79,7 @@ const uint16_t SAND_COLORS[] = {
 #define FIXED_VAL       6   // Reserved: button zone cells (never overwritten)
 #define OBSTACLE_COLOR  RGB565(110, 110, 110)
 
-enum DrawMode : uint8_t { MODE_SAND, MODE_OBSTACLE };
+enum DrawMode : uint8_t { MODE_SAND, MODE_OBSTACLE, MODE_OBSTACLE_ERASE };
 
 bool mpuAvailable = false;
 DrawMode drawMode = MODE_SAND;
@@ -134,23 +135,35 @@ inline void drawCell(int gx, int gy, uint8_t val) {
 
 // --- UI Buttons ---
 void drawButtons() {
-    uint16_t sandBorder = (drawMode == MODE_SAND)     ? TFT_WHITE : TFT_DARKGREY;
-    uint16_t obsBorder  = (drawMode == MODE_OBSTACLE) ? TFT_WHITE : TFT_DARKGREY;
-    // Sand button (yellow)
+    uint16_t sandBorder  = (drawMode == MODE_SAND)           ? TFT_WHITE : TFT_DARKGREY;
+    uint16_t obsBorder   = (drawMode == MODE_OBSTACLE)       ? TFT_WHITE : TFT_DARKGREY;
+    uint16_t eraseBorder = (drawMode == MODE_OBSTACLE_ERASE) ? TFT_WHITE : TFT_DARKGREY;
+
+    // Sand button (sand color)
     tft.fillRect(BTN_X + 1, BTN_SAND_Y + 1, BTN_SIZE - 2, BTN_SIZE - 2, SAND_COLORS[0]);
     tft.drawRect(BTN_X, BTN_SAND_Y, BTN_SIZE, BTN_SIZE, sandBorder);
+
+    // Clear-all button (sand color + black X)
+    tft.fillRect(BTN_X + 1, BTN_CLR_Y + 1, BTN_SIZE - 2, BTN_SIZE - 2, SAND_COLORS[0]);
+    tft.drawRect(BTN_X, BTN_CLR_Y, BTN_SIZE, BTN_SIZE, TFT_DARKGREY);
+    tft.drawLine(BTN_X + 3, BTN_CLR_Y + 3, BTN_X + BTN_SIZE - 4, BTN_CLR_Y + BTN_SIZE - 4, TFT_BLACK);
+    tft.drawLine(BTN_X + BTN_SIZE - 4, BTN_CLR_Y + 3, BTN_X + 3, BTN_CLR_Y + BTN_SIZE - 4, TFT_BLACK);
+
     // Obstacle button (gray)
-    tft.fillRect(BTN_X + 1, BTN_OBS_Y  + 1, BTN_SIZE - 2, BTN_SIZE - 2, OBSTACLE_COLOR);
-    tft.drawRect(BTN_X, BTN_OBS_Y,  BTN_SIZE, BTN_SIZE, obsBorder);
-    // Reset button (red) — tap: clear sand | hold 600ms: clear all
-    tft.fillRect(BTN_X + 1, BTN_RST_Y  + 1, BTN_SIZE - 2, BTN_SIZE - 2, TFT_RED);
-    tft.drawRect(BTN_X, BTN_RST_Y,  BTN_SIZE, BTN_SIZE, TFT_DARKGREY);
+    tft.fillRect(BTN_X + 1, BTN_OBS_Y + 1, BTN_SIZE - 2, BTN_SIZE - 2, OBSTACLE_COLOR);
+    tft.drawRect(BTN_X, BTN_OBS_Y, BTN_SIZE, BTN_SIZE, obsBorder);
+
+    // Obstacle erase button (gray + white X)
+    tft.fillRect(BTN_X + 1, BTN_ERASE_Y + 1, BTN_SIZE - 2, BTN_SIZE - 2, OBSTACLE_COLOR);
+    tft.drawRect(BTN_X, BTN_ERASE_Y, BTN_SIZE, BTN_SIZE, eraseBorder);
+    tft.drawLine(BTN_X + 3, BTN_ERASE_Y + 3, BTN_X + BTN_SIZE - 4, BTN_ERASE_Y + BTN_SIZE - 4, TFT_WHITE);
+    tft.drawLine(BTN_X + BTN_SIZE - 4, BTN_ERASE_Y + 3, BTN_X + 3, BTN_ERASE_Y + BTN_SIZE - 4, TFT_WHITE);
 }
 
 // Mark button-zone grid cells as FIXED so sand never enters them
 void markButtonZone() {
     int maxGX = (BTN_X + BTN_SIZE + CELL_SIZE) / CELL_SIZE;
-    int maxGY = (BTN_RST_Y + BTN_SIZE + CELL_SIZE) / CELL_SIZE;
+    int maxGY = (BTN_ERASE_Y + BTN_SIZE + CELL_SIZE) / CELL_SIZE;
     for (int gy = 0; gy < maxGY && gy < GRID_H; gy++)
         for (int gx = 0; gx < maxGX && gx < GRID_W; gx++)
             grid[gy][gx] = FIXED_VAL;
@@ -197,32 +210,12 @@ void updateGravityDir() {
 void handleTouch() {
     static bool wasTouched    = false;
     static bool touchIsButton = false;
-    static bool touchOnReset  = false;
-    static bool resetTriggered = false;
-    static uint32_t resetPressMs = 0;
 
     bool isTouched = ts.touched();
 
     if (!isTouched) {
-        // On release: short-tap reset → clear sand only (obstacles kept)
-        if (wasTouched && touchOnReset && !resetTriggered) {
-            for (int y = 0; y < GRID_H; y++)
-                for (int x = 0; x < GRID_W; x++)
-                    if (grid[y][x] != OBSTACLE_VAL && grid[y][x] != FIXED_VAL)
-                        grid[y][x] = 0;
-            tft.fillScreen(BG_COLOR);
-            tft.startWrite();
-            for (int y = 0; y < GRID_H; y++)
-                for (int x = 0; x < GRID_W; x++)
-                    if (grid[y][x] == OBSTACLE_VAL)
-                        drawCell(x, y, OBSTACLE_VAL);
-            tft.endWrite();
-            drawButtons();
-        }
         wasTouched    = false;
         touchIsButton = false;
-        touchOnReset  = false;
-        resetTriggered = false;
         return;
     }
 
@@ -235,37 +228,32 @@ void handleTouch() {
     // --- Rising edge: detect which button was pressed ---
     if (!wasTouched) {
         touchIsButton = false;
-        touchOnReset  = false;
         if (sx >= BTN_X && sx < BTN_X + BTN_SIZE) {
             if (sy >= BTN_SAND_Y && sy < BTN_SAND_Y + BTN_SIZE) {
                 drawMode = MODE_SAND;
+                drawButtons();
+                touchIsButton = true;
+            } else if (sy >= BTN_CLR_Y && sy < BTN_CLR_Y + BTN_SIZE) {
+                // Clear all (sand + obstacles)
+                memset(grid, 0, sizeof(grid));
+                markButtonZone();
+                tft.fillScreen(BG_COLOR);
                 drawButtons();
                 touchIsButton = true;
             } else if (sy >= BTN_OBS_Y && sy < BTN_OBS_Y + BTN_SIZE) {
                 drawMode = MODE_OBSTACLE;
                 drawButtons();
                 touchIsButton = true;
-            } else if (sy >= BTN_RST_Y && sy < BTN_RST_Y + BTN_SIZE) {
+            } else if (sy >= BTN_ERASE_Y && sy < BTN_ERASE_Y + BTN_SIZE) {
+                drawMode = MODE_OBSTACLE_ERASE;
+                drawButtons();
                 touchIsButton = true;
-                touchOnReset  = true;
-                resetTriggered = false;
-                resetPressMs  = millis();
             }
         }
         wasTouched = true;
     }
 
-    // --- Long press on reset (≥600 ms): clear sand + obstacles ---
-    if (touchOnReset && !resetTriggered && millis() - resetPressMs >= 600) {
-        memset(grid, 0, sizeof(grid));
-        markButtonZone();
-        tft.fillScreen(BG_COLOR);
-        drawButtons();
-        resetTriggered = true;
-        return;
-    }
-
-    if (touchIsButton) return; // Never draw while a button is held
+    if (touchIsButton) return;
 
     // --- Drawing ---
     int gx = sx / CELL_SIZE;
@@ -286,7 +274,7 @@ void handleTouch() {
                 }
             }
         }
-    } else {
+    } else if (drawMode == MODE_OBSTACLE) {
         for (int dy = -OBSTACLE_BRUSH; dy <= OBSTACLE_BRUSH; dy++) {
             for (int dx = -OBSTACLE_BRUSH; dx <= OBSTACLE_BRUSH; dx++) {
                 int nx = gx + dx;
@@ -295,6 +283,18 @@ void handleTouch() {
                     && grid[ny][nx] != OBSTACLE_VAL && grid[ny][nx] != FIXED_VAL) {
                     grid[ny][nx] = OBSTACLE_VAL;
                     drawCell(nx, ny, OBSTACLE_VAL);
+                }
+            }
+        }
+    } else { // MODE_OBSTACLE_ERASE
+        for (int dy = -OBSTACLE_BRUSH; dy <= OBSTACLE_BRUSH; dy++) {
+            for (int dx = -OBSTACLE_BRUSH; dx <= OBSTACLE_BRUSH; dx++) {
+                int nx = gx + dx;
+                int ny = gy + dy;
+                if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H
+                    && grid[ny][nx] == OBSTACLE_VAL) {
+                    grid[ny][nx] = 0;
+                    drawCell(nx, ny, 0);
                 }
             }
         }
