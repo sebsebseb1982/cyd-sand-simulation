@@ -33,6 +33,12 @@
 #define BRUSH_RADIUS    3
 #define OBSTACLE_BRUSH  1  // Obstacle brush radius in grid cells
 
+// Max lateral scan distance for liquid leveling (cells)
+#define LIQUID_FLOW     10
+
+// Max lateral scan distance for liquid leveling (cells)
+#define LIQUID_FLOW     10
+
 // UI Button layout (screen pixels, stacked top-left)
 #define BTN_SIZE    15
 #define BTN_X       2
@@ -301,12 +307,15 @@ void handleTouch() {
     }
 }
 
-// --- Sand physics ---
+// --- Liquid physics ---
 void simulateSand() {
     int dx_p = DIR_DX[primaryDir];
     int dy_p = DIR_DY[primaryDir];
     int slide1 = (primaryDir + 1) % 8;
     int slide2 = (primaryDir + 7) % 8;
+    // Perpendicular directions (+90° and -90° from primary gravity)
+    int perp1  = (primaryDir + 2) % 8;
+    int perp2  = (primaryDir + 6) % 8;
 
     // Process grains opposite to gravity direction
     int yStart, yEnd, yStep;
@@ -317,21 +326,19 @@ void simulateSand() {
     if (dx_p > 0)       { xStart = GRID_W - 1; xEnd = -1; xStep = -1; }
     else if (dx_p < 0)  { xStart = 0; xEnd = GRID_W; xStep = 1; }
     else {
-        // Alternate scan direction for symmetry
         if (random(2)) { xStart = 0; xEnd = GRID_W; xStep = 1; }
         else           { xStart = GRID_W - 1; xEnd = -1; xStep = -1; }
     }
 
     // Friction: probability of a grain moving this frame (0-100)
-    // Below deadzone: frozen. Between deadzone and full: gradual. Above full: always moves.
     int moveChance;
     if (gravMag < GRAVITY_DEADZONE) {
-        return; // fully frozen, skip simulation entirely
+        return;
     } else if (gravMag >= GRAVITY_FULL) {
         moveChance = 100;
     } else {
         float t = (gravMag - GRAVITY_DEADZONE) / (GRAVITY_FULL - GRAVITY_DEADZONE);
-        moveChance = (int)(t * t * 100.0f); // quadratic ramp for natural feel
+        moveChance = (int)(t * t * 100.0f);
     }
 
     tft.startWrite();
@@ -339,41 +346,58 @@ void simulateSand() {
     for (int y = yStart; y != yEnd; y += yStep) {
         for (int x = xStart; x != xEnd; x += xStep) {
             uint8_t val = grid[y][x];
-            if (val == 0 || val > NUM_COLORS) continue; // skip empty, obstacles, fixed
+            if (val == 0 || val > NUM_COLORS) continue;
             if (moveChance < 100 && (int)random(100) >= moveChance) continue;
 
-            // Try primary gravity direction
-            int nx = x + dx_p;
-            int ny = y + dy_p;
+            // 1. Try primary gravity direction
+            int nx = x + dx_p, ny = y + dy_p;
             if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && grid[ny][nx] == 0) {
-                grid[ny][nx] = val;
-                grid[y][x] = 0;
-                drawCell(x, y, 0);
-                drawCell(nx, ny, val);
+                grid[ny][nx] = val; grid[y][x] = 0;
+                drawCell(x, y, 0); drawCell(nx, ny, val);
                 continue;
             }
 
-            // Try diagonal slides (random order for natural look)
+            // 2. Try diagonal slides (random order)
             int s1 = slide1, s2 = slide2;
             if (random(2)) { s1 = slide2; s2 = slide1; }
 
-            nx = x + DIR_DX[s1];
-            ny = y + DIR_DY[s1];
+            nx = x + DIR_DX[s1]; ny = y + DIR_DY[s1];
             if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && grid[ny][nx] == 0) {
-                grid[ny][nx] = val;
-                grid[y][x] = 0;
-                drawCell(x, y, 0);
-                drawCell(nx, ny, val);
+                grid[ny][nx] = val; grid[y][x] = 0;
+                drawCell(x, y, 0); drawCell(nx, ny, val);
                 continue;
             }
 
-            nx = x + DIR_DX[s2];
-            ny = y + DIR_DY[s2];
+            nx = x + DIR_DX[s2]; ny = y + DIR_DY[s2];
             if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && grid[ny][nx] == 0) {
-                grid[ny][nx] = val;
-                grid[y][x] = 0;
-                drawCell(x, y, 0);
-                drawCell(nx, ny, val);
+                grid[ny][nx] = val; grid[y][x] = 0;
+                drawCell(x, y, 0); drawCell(nx, ny, val);
+                continue;
+            }
+
+            // 3. Liquid leveling: scan laterally along the surface looking for a spot
+            //    where the grain can fall further (lower ground).  Scanning up to
+            //    LIQUID_FLOW cells through contiguous empty cells forces the surface
+            //    toward a flat equilibrium — eliminating stable piles.
+            int p1 = perp1, p2 = perp2;
+            if (random(2)) { p1 = perp2; p2 = perp1; }
+
+            bool moved = false;
+            for (int pass = 0; pass < 2 && !moved; pass++) {
+                int pd = (pass == 0) ? p1 : p2;
+                for (int dist = 1; dist <= LIQUID_FLOW && !moved; dist++) {
+                    int cx = x + DIR_DX[pd] * dist;
+                    int cy = y + DIR_DY[pd] * dist;
+                    if (cx < 0 || cx >= GRID_W || cy < 0 || cy >= GRID_H) break;
+                    if (grid[cy][cx] != 0) break; // path blocked by grain or obstacle
+                    // Move only if destination has an open fall path (true lower ground)
+                    int bx = cx + dx_p, by = cy + dy_p;
+                    if (bx >= 0 && bx < GRID_W && by >= 0 && by < GRID_H && grid[by][bx] == 0) {
+                        grid[cy][cx] = val; grid[y][x] = 0;
+                        drawCell(x, y, 0); drawCell(cx, cy, val);
+                        moved = true;
+                    }
+                }
             }
         }
     }
