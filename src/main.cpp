@@ -36,13 +36,18 @@
 // Max lateral scan distance for liquid leveling (cells)
 #define LIQUID_FLOW     10
 
-// UI Button layout (screen pixels, stacked top-left)
-#define BTN_SIZE    15
-#define BTN_X       2
-#define BTN_SAND_Y  2
-#define BTN_CLR_Y   (BTN_SAND_Y + BTN_SIZE + 3)
-#define BTN_OBS_Y   (BTN_CLR_Y  + BTN_SIZE + 3)
-#define BTN_ERASE_Y (BTN_OBS_Y  + BTN_SIZE + 3)
+// UI - Hamburger menu button (top-left corner, always visible)
+#define MENU_BTN_X    2
+#define MENU_BTN_Y    2
+#define MENU_BTN_W    28
+#define MENU_BTN_H    28
+
+// Menu panel items (shown below hamburger when open)
+#define MENU_PANEL_X  2
+#define MENU_PANEL_Y  (MENU_BTN_Y + MENU_BTN_H + 4)
+#define MENU_ITEM_W   90
+#define MENU_ITEM_H   24
+#define MENU_ITEM_GAP 3
 
 // --- Objects ---
 TFT_eSPI tft;
@@ -86,6 +91,7 @@ enum DrawMode : uint8_t { MODE_SAND, MODE_OBSTACLE, MODE_OBSTACLE_ERASE };
 
 bool mpuAvailable = false;
 DrawMode drawMode = MODE_SAND;
+bool menuOpen = false;
 
 // --- Setup Functions ---
 void setupDisplay() {
@@ -136,37 +142,67 @@ inline void drawCell(int gx, int gy, uint8_t val) {
     tft.fillRect(gx * CELL_SIZE, gy * CELL_SIZE, CELL_SIZE, CELL_SIZE, color);
 }
 
-// --- UI Buttons ---
-void drawButtons() {
-    uint16_t sandBorder  = (drawMode == MODE_SAND)           ? TFT_WHITE : TFT_DARKGREY;
-    uint16_t obsBorder   = (drawMode == MODE_OBSTACLE)       ? TFT_WHITE : TFT_DARKGREY;
-    uint16_t eraseBorder = (drawMode == MODE_OBSTACLE_ERASE) ? TFT_WHITE : TFT_DARKGREY;
-
-    // Sand button (sand color)
-    tft.fillRect(BTN_X + 1, BTN_SAND_Y + 1, BTN_SIZE - 2, BTN_SIZE - 2, SAND_COLORS[0]);
-    tft.drawRect(BTN_X, BTN_SAND_Y, BTN_SIZE, BTN_SIZE, sandBorder);
-
-    // Clear-all button (sand color + black X)
-    tft.fillRect(BTN_X + 1, BTN_CLR_Y + 1, BTN_SIZE - 2, BTN_SIZE - 2, SAND_COLORS[0]);
-    tft.drawRect(BTN_X, BTN_CLR_Y, BTN_SIZE, BTN_SIZE, TFT_DARKGREY);
-    tft.drawLine(BTN_X + 3, BTN_CLR_Y + 3, BTN_X + BTN_SIZE - 4, BTN_CLR_Y + BTN_SIZE - 4, TFT_BLACK);
-    tft.drawLine(BTN_X + BTN_SIZE - 4, BTN_CLR_Y + 3, BTN_X + 3, BTN_CLR_Y + BTN_SIZE - 4, TFT_BLACK);
-
-    // Obstacle button (gray)
-    tft.fillRect(BTN_X + 1, BTN_OBS_Y + 1, BTN_SIZE - 2, BTN_SIZE - 2, OBSTACLE_COLOR);
-    tft.drawRect(BTN_X, BTN_OBS_Y, BTN_SIZE, BTN_SIZE, obsBorder);
-
-    // Obstacle erase button (gray + white X)
-    tft.fillRect(BTN_X + 1, BTN_ERASE_Y + 1, BTN_SIZE - 2, BTN_SIZE - 2, OBSTACLE_COLOR);
-    tft.drawRect(BTN_X, BTN_ERASE_Y, BTN_SIZE, BTN_SIZE, eraseBorder);
-    tft.drawLine(BTN_X + 3, BTN_ERASE_Y + 3, BTN_X + BTN_SIZE - 4, BTN_ERASE_Y + BTN_SIZE - 4, TFT_WHITE);
-    tft.drawLine(BTN_X + BTN_SIZE - 4, BTN_ERASE_Y + 3, BTN_X + 3, BTN_ERASE_Y + BTN_SIZE - 4, TFT_WHITE);
+// --- UI: Hamburger menu button ---
+void drawMenuButton() {
+    uint16_t bg = menuOpen ? RGB565(80, 80, 80) : RGB565(40, 40, 40);
+    tft.fillRect(MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H, bg);
+    tft.drawRect(MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H, TFT_WHITE);
+    int lx = MENU_BTN_X + 5, lw = MENU_BTN_W - 10;
+    tft.drawFastHLine(lx, MENU_BTN_Y + 8,  lw, TFT_WHITE);
+    tft.drawFastHLine(lx, MENU_BTN_Y + 14, lw, TFT_WHITE);
+    tft.drawFastHLine(lx, MENU_BTN_Y + 20, lw, TFT_WHITE);
 }
 
-// Mark button-zone grid cells as FIXED so sand never enters them
+// --- UI: Menu panel (4 items) ---
+void drawMenuPanel() {
+    static const char* labels[] = { "Sand", "Clear", "Wall", "Erase" };
+    static const uint16_t bgs[] = { SAND_COLORS[0], SAND_COLORS[0], OBSTACLE_COLOR, OBSTACLE_COLOR };
+    for (int i = 0; i < 4; i++) {
+        int iy = MENU_PANEL_Y + i * (MENU_ITEM_H + MENU_ITEM_GAP);
+        bool active = (i == 0 && drawMode == MODE_SAND)
+                   || (i == 2 && drawMode == MODE_OBSTACLE)
+                   || (i == 3 && drawMode == MODE_OBSTACLE_ERASE);
+        uint16_t border = active ? TFT_WHITE : TFT_DARKGREY;
+        tft.fillRect(MENU_PANEL_X + 1, iy + 1, MENU_ITEM_W - 2, MENU_ITEM_H - 2, bgs[i]);
+        tft.drawRect(MENU_PANEL_X, iy, MENU_ITEM_W, MENU_ITEM_H, border);
+        if (i == 1) {
+            tft.drawLine(MENU_PANEL_X + 4, iy + 4, MENU_PANEL_X + MENU_ITEM_W - 5, iy + MENU_ITEM_H - 5, TFT_BLACK);
+            tft.drawLine(MENU_PANEL_X + MENU_ITEM_W - 5, iy + 4, MENU_PANEL_X + 4, iy + MENU_ITEM_H - 5, TFT_BLACK);
+        } else if (i == 3) {
+            tft.drawLine(MENU_PANEL_X + 4, iy + 4, MENU_PANEL_X + MENU_ITEM_W - 5, iy + MENU_ITEM_H - 5, TFT_WHITE);
+            tft.drawLine(MENU_PANEL_X + MENU_ITEM_W - 5, iy + 4, MENU_PANEL_X + 4, iy + MENU_ITEM_H - 5, TFT_WHITE);
+        }
+        uint16_t textColor = (bgs[i] == OBSTACLE_COLOR) ? TFT_WHITE : TFT_BLACK;
+        tft.setTextColor(textColor, bgs[i]);
+        tft.setTextSize(1);
+        int tx = MENU_PANEL_X + (MENU_ITEM_W - (int)strlen(labels[i]) * 6) / 2;
+        int ty = iy + (MENU_ITEM_H - 8) / 2;
+        tft.setCursor(tx, ty);
+        tft.print(labels[i]);
+    }
+}
+
+// Close menu and restore grid cells that were painted over
+void closeMenu() {
+    menuOpen = false;
+    int gx0 = MENU_PANEL_X / CELL_SIZE;
+    int gy0 = MENU_PANEL_Y / CELL_SIZE;
+    int gx1 = (MENU_PANEL_X + MENU_ITEM_W) / CELL_SIZE + 1;
+    int gy1 = (MENU_PANEL_Y + 4 * (MENU_ITEM_H + MENU_ITEM_GAP)) / CELL_SIZE + 1;
+    if (gx1 >= GRID_W) gx1 = GRID_W - 1;
+    if (gy1 >= GRID_H) gy1 = GRID_H - 1;
+    tft.startWrite();
+    for (int gy = gy0; gy <= gy1; gy++)
+        for (int gx = gx0; gx <= gx1; gx++)
+            drawCell(gx, gy, grid[gy][gx]);
+    tft.endWrite();
+    drawMenuButton();
+}
+
+// Mark hamburger button zone as FIXED so sand never enters it
 void markButtonZone() {
-    int maxGX = (BTN_X + BTN_SIZE + CELL_SIZE) / CELL_SIZE;
-    int maxGY = (BTN_ERASE_Y + BTN_SIZE + CELL_SIZE) / CELL_SIZE;
+    int maxGX = (MENU_BTN_X + MENU_BTN_W + CELL_SIZE) / CELL_SIZE;
+    int maxGY = (MENU_BTN_Y + MENU_BTN_H + CELL_SIZE) / CELL_SIZE;
     for (int gy = 0; gy < maxGY && gy < GRID_H; gy++)
         for (int gx = 0; gx < maxGX && gx < GRID_W; gx++)
             grid[gy][gx] = FIXED_VAL;
@@ -225,30 +261,44 @@ void handleTouch() {
     sx = constrain(sx, 0, SCREEN_W - 1);
     sy = constrain(sy, 0, SCREEN_H - 1);
 
-    // --- Rising edge: detect which button was pressed ---
+    // --- Rising edge: detect hamburger / menu item press ---
     if (!wasTouched) {
         touchIsButton = false;
-        if (sx >= BTN_X && sx < BTN_X + BTN_SIZE) {
-            if (sy >= BTN_SAND_Y && sy < BTN_SAND_Y + BTN_SIZE) {
-                drawMode = MODE_SAND;
-                drawButtons();
-                touchIsButton = true;
-            } else if (sy >= BTN_CLR_Y && sy < BTN_CLR_Y + BTN_SIZE) {
-                // Clear all (sand + obstacles)
-                memset(grid, 0, sizeof(grid));
-                markButtonZone();
-                tft.fillScreen(BG_COLOR);
-                drawButtons();
-                touchIsButton = true;
-            } else if (sy >= BTN_OBS_Y && sy < BTN_OBS_Y + BTN_SIZE) {
-                drawMode = MODE_OBSTACLE;
-                drawButtons();
-                touchIsButton = true;
-            } else if (sy >= BTN_ERASE_Y && sy < BTN_ERASE_Y + BTN_SIZE) {
-                drawMode = MODE_OBSTACLE_ERASE;
-                drawButtons();
-                touchIsButton = true;
+        bool inHamburger = (sx >= MENU_BTN_X && sx < MENU_BTN_X + MENU_BTN_W &&
+                            sy >= MENU_BTN_Y && sy < MENU_BTN_Y + MENU_BTN_H);
+        if (inHamburger) {
+            menuOpen = !menuOpen;
+            if (menuOpen) { drawMenuButton(); drawMenuPanel(); }
+            else          { closeMenu(); }
+            touchIsButton = true;
+        } else if (menuOpen) {
+            bool hitItem = false;
+            if (sx >= MENU_PANEL_X && sx < MENU_PANEL_X + MENU_ITEM_W) {
+                for (int i = 0; i < 4 && !hitItem; i++) {
+                    int iy = MENU_PANEL_Y + i * (MENU_ITEM_H + MENU_ITEM_GAP);
+                    if (sy >= iy && sy < iy + MENU_ITEM_H) {
+                        if (i == 0) {
+                            drawMode = MODE_SAND;
+                            closeMenu();
+                        } else if (i == 1) {
+                            memset(grid, 0, sizeof(grid));
+                            markButtonZone();
+                            tft.fillScreen(BG_COLOR);
+                            menuOpen = false;
+                            drawMenuButton();
+                        } else if (i == 2) {
+                            drawMode = MODE_OBSTACLE;
+                            closeMenu();
+                        } else {
+                            drawMode = MODE_OBSTACLE_ERASE;
+                            closeMenu();
+                        }
+                        hitItem = true;
+                    }
+                }
             }
+            if (!hitItem) closeMenu();  // tap outside menu closes it
+            touchIsButton = true;       // consume touch regardless
         }
         wasTouched = true;
     }
@@ -419,7 +469,7 @@ void setup() {
     setupTouch();
     setupMPU();
     markButtonZone();
-    drawButtons();
+    drawMenuButton();
 }
 
 void loop() {
