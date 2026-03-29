@@ -36,9 +36,6 @@
 // Max lateral scan distance for liquid leveling (cells)
 #define LIQUID_FLOW     10
 
-// Max lateral scan distance for liquid leveling (cells)
-#define LIQUID_FLOW     10
-
 // UI Button layout (screen pixels, stacked top-left)
 #define BTN_SIZE    15
 #define BTN_X       2
@@ -203,10 +200,7 @@ void readAccelerometer() {
 }
 
 void updateGravityDir() {
-    if (gravMag < GRAVITY_DEADZONE) {
-        // Screen is flat: keep current direction but sand won't move (handled in simulateSand)
-        return;
-    }
+    if (gravMag < GRAVITY_DEADZONE) return;
     float angle = atan2f(gravX, gravY);
     int dir = (int)roundf(angle / (M_PI / 4.0f));
     primaryDir = ((dir % 8) + 8) % 8;
@@ -311,11 +305,17 @@ void handleTouch() {
 void simulateSand() {
     int dx_p = DIR_DX[primaryDir];
     int dy_p = DIR_DY[primaryDir];
-    int slide1 = (primaryDir + 1) % 8;
-    int slide2 = (primaryDir + 7) % 8;
-    // Perpendicular directions (+90° and -90° from primary gravity)
+    // Perpendicular directions (+90° and -90° from primary gravity, for liquid leveling)
     int perp1  = (primaryDir + 2) % 8;
     int perp2  = (primaryDir + 6) % 8;
+
+    // Continuous gravity: interpolate stochastically between the two bracketing 45°-directions
+    // to avoid visible snapping to 8 discrete angles.
+    float gravAngle = atan2f(gravX, gravY);
+    float sectorF   = gravAngle / (M_PI / 4.0f);
+    int   dirFloor  = (((int)floorf(sectorF)) % 8 + 8) % 8;
+    int   dirCeil   = (dirFloor + 1) % 8;
+    int   blendT    = (int)((sectorF - floorf(sectorF)) * 256.0f); // 0..255
 
     // Process grains opposite to gravity direction
     int yStart, yEnd, yStep;
@@ -349,8 +349,14 @@ void simulateSand() {
             if (val == 0 || val > NUM_COLORS) continue;
             if (moveChance < 100 && (int)random(100) >= moveChance) continue;
 
+            // Per-grain: stochastically pick between the two directions bracketing the
+            // continuous gravity angle, giving smooth motion at any orientation.
+            int fallDir = ((int)random(256) < blendT) ? dirCeil : dirFloor;
+            int fdx = DIR_DX[fallDir], fdy = DIR_DY[fallDir];
+            int fs1 = (fallDir + 1) % 8, fs2 = (fallDir + 7) % 8;
+
             // 1. Try primary gravity direction
-            int nx = x + dx_p, ny = y + dy_p;
+            int nx = x + fdx, ny = y + fdy;
             if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && grid[ny][nx] == 0) {
                 grid[ny][nx] = val; grid[y][x] = 0;
                 drawCell(x, y, 0); drawCell(nx, ny, val);
@@ -358,8 +364,8 @@ void simulateSand() {
             }
 
             // 2. Try diagonal slides (random order)
-            int s1 = slide1, s2 = slide2;
-            if (random(2)) { s1 = slide2; s2 = slide1; }
+            int s1 = fs1, s2 = fs2;
+            if (random(2)) { s1 = fs2; s2 = fs1; }
 
             nx = x + DIR_DX[s1]; ny = y + DIR_DY[s1];
             if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && grid[ny][nx] == 0) {
@@ -375,10 +381,8 @@ void simulateSand() {
                 continue;
             }
 
-            // 3. Liquid leveling: scan laterally along the surface looking for a spot
-            //    where the grain can fall further (lower ground).  Scanning up to
-            //    LIQUID_FLOW cells through contiguous empty cells forces the surface
-            //    toward a flat equilibrium — eliminating stable piles.
+            // 3. Liquid leveling: scan laterally (perpendicular to gravity) and move
+            //    to the first spot that has an open fall path below it.
             int p1 = perp1, p2 = perp2;
             if (random(2)) { p1 = perp2; p2 = perp1; }
 
@@ -389,9 +393,9 @@ void simulateSand() {
                     int cx = x + DIR_DX[pd] * dist;
                     int cy = y + DIR_DY[pd] * dist;
                     if (cx < 0 || cx >= GRID_W || cy < 0 || cy >= GRID_H) break;
-                    if (grid[cy][cx] != 0) break; // path blocked by grain or obstacle
+                    if (grid[cy][cx] != 0) break;
                     // Move only if destination has an open fall path (true lower ground)
-                    int bx = cx + dx_p, by = cy + dy_p;
+                    int bx = cx + fdx, by = cy + fdy;
                     if (bx >= 0 && bx < GRID_W && by >= 0 && by < GRID_H && grid[by][bx] == 0) {
                         grid[cy][cx] = val; grid[y][x] = 0;
                         drawCell(x, y, 0); drawCell(cx, cy, val);
