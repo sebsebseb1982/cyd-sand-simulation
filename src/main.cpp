@@ -80,10 +80,10 @@ int primaryDir = 0;
 // Sand color palette (RGB565)
 #define RGB565(r,g,b) ((((r)&0xF8)<<8)|(((g)&0xFC)<<3)|((b)>>3))
 const uint16_t SAND_COLORS[] = {
-    RGB565(236, 204, 104),
-    RGB565(214, 182, 86),
-    RGB565(246, 220, 130),
-    RGB565(200, 168, 72),
+    RGB565(255, 237, 209),  // base cream  #ffedd1
+    RGB565(255, 225, 186),  // warmer/more saturated
+    RGB565(255, 245, 230),  // lighter variant
+    RGB565(240, 220, 180),  // deeper/more visible
 };
 #define NUM_COLORS 4
 #define BG_COLOR TFT_BLACK
@@ -94,13 +94,13 @@ const uint16_t SAND_COLORS[] = {
 #define FIRE_MIN        8   // Fire particle (variants 8-11)
 #define FIRE_MAX        11
 
-#define WOOD_COLOR      RGB565(101,  67,  33)
-#define FIRE_SRC_COLOR  RGB565(255, 100,   0)
+#define WOOD_COLOR      RGB565(163, 101,   0)  // #a36500
+#define FIRE_SRC_COLOR  RGB565(255,  47,   0)  // #ff2f00
 const uint16_t FIRE_COLORS[] = {
-    RGB565(255, 200,  50),
-    RGB565(255, 160,  20),
-    RGB565(255, 130,  10),
-    RGB565(255, 220,  80),
+    RGB565(255,  47,   0),  // base red    #ff2f00
+    RGB565(255,  80,   0),  // orange-red
+    RGB565(255,  20,   0),  // deep red
+    RGB565(255, 112,   0),  // orange
 };
 
 enum DrawMode : uint8_t { MODE_SAND, MODE_WOOD, MODE_FIRE, MODE_ERASE };
@@ -113,6 +113,7 @@ bool menuOpen = false;
 void setupDisplay() {
     tft.init();
     tft.setRotation(1);
+    tft.invertDisplay(1);  // Fix color inversion on CYD display
     tft.fillScreen(BG_COLOR);
     pinMode(21, OUTPUT);
     digitalWrite(21, HIGH);
@@ -176,29 +177,29 @@ void drawMenuButton() {
 void drawMenuPanel() {
     static const char* labels[]      = { "Sand", "Wood", "Fire", "Erase", "Clear" };
     static const uint16_t btnColors[] = {
-        RGB565(180, 140,  55),  // sand  – warm yellow
-        RGB565(101,  67,  33),  // wood  – brown
-        RGB565(200,  70,   0),  // fire  – orange-red
-        RGB565( 75,  55,  95),  // erase – purple-grey
-        RGB565(150,  45,  45),  // clear – red
+        SAND_COLORS[0], // sand  – cream #ffedd1
+        WOOD_COLOR,  // wood  – amber #a36500
+        FIRE_SRC_COLOR,  // fire  – red   #ff2f00
+        RGB565( 70,  70,  70),  // erase – anthracite
+        RGB565(180,  30,  30),  // clear – dark red
     };
 
     // Panel background + double border
-    tft.fillRect(MENU_PANEL_X, MENU_PANEL_Y, MENU_PANEL_W, MENU_PANEL_H, RGB565(20, 20, 30));
+    tft.fillRect(MENU_PANEL_X, MENU_PANEL_Y, MENU_PANEL_W, MENU_PANEL_H, RGB565(30, 28, 28));
     tft.drawRect(MENU_PANEL_X,     MENU_PANEL_Y,     MENU_PANEL_W,     MENU_PANEL_H,     TFT_WHITE);
-    tft.drawRect(MENU_PANEL_X + 2, MENU_PANEL_Y + 2, MENU_PANEL_W - 4, MENU_PANEL_H - 4, RGB565(70, 70, 110));
+    tft.drawRect(MENU_PANEL_X + 2, MENU_PANEL_Y + 2, MENU_PANEL_W - 4, MENU_PANEL_H - 4, RGB565(90, 80, 70));
 
     // Title
     const char* title = "MENU";
     tft.setTextSize(1);
-    tft.setTextColor(TFT_WHITE, RGB565(20, 20, 30));
+    tft.setTextColor(TFT_WHITE, RGB565(30, 28, 28));
     int tx = MENU_PANEL_X + (MENU_PANEL_W - (int)strlen(title) * 6) / 2;
     tft.setCursor(tx, MENU_PANEL_Y + MENU_PANEL_PADDING);
     tft.print(title);
 
     // Separator
     tft.drawFastHLine(MENU_PANEL_X + 6, MENU_PANEL_Y + MENU_PANEL_PADDING + 12,
-                      MENU_PANEL_W - 12, RGB565(70, 70, 110));
+                      MENU_PANEL_W - 12, RGB565(100, 90, 80));
 
     // Buttons
     int itemX  = MENU_PANEL_X + MENU_PANEL_PADDING;
@@ -211,20 +212,21 @@ void drawMenuPanel() {
                    || (i == 2 && drawMode == MODE_FIRE)
                    || (i == 3 && drawMode == MODE_ERASE);
 
-        tft.fillRect(itemX, iy, MENU_ITEM_W, MENU_ITEM_H, btnColors[i]);
-        // Border: double border when active
+        // Square color swatch
+        tft.fillRect(itemX, iy, MENU_ITEM_H, MENU_ITEM_H, btnColors[i]);
         uint16_t borderCol = active ? TFT_WHITE : RGB565(110, 110, 140);
-        tft.drawRect(itemX, iy, MENU_ITEM_W, MENU_ITEM_H, borderCol);
+        tft.drawRect(itemX, iy, MENU_ITEM_H, MENU_ITEM_H, borderCol);
         if (active) {
-            tft.drawRect(itemX + 1, iy + 1, MENU_ITEM_W - 2, MENU_ITEM_H - 2, borderCol);
+            tft.drawRect(itemX + 1, iy + 1, MENU_ITEM_H - 2, MENU_ITEM_H - 2, borderCol);
         }
 
-        // Label centered, size 2 (12×16 px per char)
+        // Label to the right of the square
+        int labelX = itemX + MENU_ITEM_H + 8;
+        int ly     = iy + (MENU_ITEM_H - 16) / 2;
+        tft.fillRect(labelX, iy, MENU_ITEM_W - MENU_ITEM_H - 8, MENU_ITEM_H, RGB565(30, 28, 28));
         tft.setTextSize(2);
-        tft.setTextColor(TFT_WHITE, btnColors[i]);
-        int lx = itemX + (MENU_ITEM_W - (int)strlen(labels[i]) * 12) / 2;
-        int ly = iy    + (MENU_ITEM_H - 16) / 2;
-        tft.setCursor(lx, ly);
+        tft.setTextColor(TFT_WHITE, RGB565(30, 28, 28));
+        tft.setCursor(labelX, ly);
         tft.print(labels[i]);
     }
     tft.setTextSize(1); // restore
@@ -649,6 +651,8 @@ void loop() {
     readAccelerometer();
     updateGravityDir();
     handleTouch();
-    simulateSand();
-    simulateFire();
+    if (!menuOpen) {
+        simulateSand();
+        simulateFire();
+    }
 }
