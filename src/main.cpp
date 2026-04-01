@@ -49,7 +49,7 @@
 #define MENU_ITEM_W         (MENU_PANEL_W - MENU_PANEL_PADDING * 2)
 #define MENU_ITEM_H         34
 #define MENU_ITEM_GAP       6
-#define NUM_MENU_ITEMS      4
+#define NUM_MENU_ITEMS      5
 #define MENU_PANEL_H        (MENU_PANEL_PADDING * 2 + MENU_TITLE_H + NUM_MENU_ITEMS * MENU_ITEM_H + (NUM_MENU_ITEMS - 1) * MENU_ITEM_GAP)
 #define MENU_PANEL_X        ((SCREEN_W - MENU_PANEL_W) / 2)
 #define MENU_PANEL_Y        ((SCREEN_H - MENU_PANEL_H) / 2)
@@ -88,11 +88,22 @@ const uint16_t SAND_COLORS[] = {
 #define NUM_COLORS 4
 #define BG_COLOR TFT_BLACK
 
-#define OBSTACLE_VAL    5
+#define WOOD_VAL        5
 #define FIXED_VAL       6   // Reserved: button zone cells (never overwritten)
-#define OBSTACLE_COLOR  RGB565(110, 110, 110)
+#define FIRE_SRC        7   // Fire source: static, emits fire particles, dies probabilistically
+#define FIRE_MIN        8   // Fire particle (variants 8-11)
+#define FIRE_MAX        11
 
-enum DrawMode : uint8_t { MODE_SAND, MODE_OBSTACLE, MODE_OBSTACLE_ERASE };
+#define WOOD_COLOR      RGB565(101,  67,  33)
+#define FIRE_SRC_COLOR  RGB565(255, 100,   0)
+const uint16_t FIRE_COLORS[] = {
+    RGB565(255, 200,  50),
+    RGB565(255, 160,  20),
+    RGB565(255, 130,  10),
+    RGB565(255, 220,  80),
+};
+
+enum DrawMode : uint8_t { MODE_SAND, MODE_WOOD, MODE_FIRE, MODE_ERASE };
 
 bool mpuAvailable = false;
 DrawMode drawMode = MODE_SAND;
@@ -141,9 +152,12 @@ void setupMPU() {
 // --- Draw a single grid cell ---
 inline void drawCell(int gx, int gy, uint8_t val) {
     if (val == FIXED_VAL) return; // Never overwrite button zone
-    uint16_t color = (val == 0)           ? BG_COLOR
-                   : (val == OBSTACLE_VAL) ? OBSTACLE_COLOR
-                                           : SAND_COLORS[val - 1];
+    uint16_t color;
+    if (val == 0)                          color = BG_COLOR;
+    else if (val <= NUM_COLORS)            color = SAND_COLORS[val - 1];
+    else if (val == WOOD_VAL)             color = WOOD_COLOR;
+    else if (val == FIRE_SRC)             color = FIRE_SRC_COLOR;
+    else                                   color = FIRE_COLORS[val - FIRE_MIN]; // FIRE_MIN..FIRE_MAX
     tft.fillRect(gx * CELL_SIZE, gy * CELL_SIZE, CELL_SIZE, CELL_SIZE, color);
 }
 
@@ -160,12 +174,13 @@ void drawMenuButton() {
 
 // --- UI: Menu panel (centered overlay) ---
 void drawMenuPanel() {
-    static const char* labels[]      = { "Sable", "Effacer", "Mur", "Gomme" };
+    static const char* labels[]      = { "Sand", "Wood", "Fire", "Erase", "Clear" };
     static const uint16_t btnColors[] = {
-        RGB565(180, 140,  55),  // sand – warm yellow
-        RGB565(150,  45,  45),  // clear – red
-        RGB565( 55,  85, 115),  // wall  – steel blue
+        RGB565(180, 140,  55),  // sand  – warm yellow
+        RGB565(101,  67,  33),  // wood  – brown
+        RGB565(200,  70,   0),  // fire  – orange-red
         RGB565( 75,  55,  95),  // erase – purple-grey
+        RGB565(150,  45,  45),  // clear – red
     };
 
     // Panel background + double border
@@ -192,8 +207,9 @@ void drawMenuPanel() {
     for (int i = 0; i < NUM_MENU_ITEMS; i++) {
         int iy = itemY0 + i * (MENU_ITEM_H + MENU_ITEM_GAP);
         bool active = (i == 0 && drawMode == MODE_SAND)
-                   || (i == 2 && drawMode == MODE_OBSTACLE)
-                   || (i == 3 && drawMode == MODE_OBSTACLE_ERASE);
+                   || (i == 1 && drawMode == MODE_WOOD)
+                   || (i == 2 && drawMode == MODE_FIRE)
+                   || (i == 3 && drawMode == MODE_ERASE);
 
         tft.fillRect(itemX, iy, MENU_ITEM_W, MENU_ITEM_H, btnColors[i]);
         // Border: double border when active
@@ -317,17 +333,20 @@ void handleTouch() {
                                 drawMode = MODE_SAND;
                                 closeMenu();
                             } else if (i == 1) {
+                                drawMode = MODE_WOOD;
+                                closeMenu();
+                            } else if (i == 2) {
+                                drawMode = MODE_FIRE;
+                                closeMenu();
+                            } else if (i == 3) {
+                                drawMode = MODE_ERASE;
+                                closeMenu();
+                            } else if (i == 4) {
                                 memset(grid, 0, sizeof(grid));
                                 markButtonZone();
                                 tft.fillScreen(BG_COLOR);
                                 menuOpen = false;
                                 drawMenuButton();
-                            } else if (i == 2) {
-                                drawMode = MODE_OBSTACLE;
-                                closeMenu();
-                            } else if (i == 3) {
-                                drawMode = MODE_OBSTACLE_ERASE;
-                                closeMenu();
                             }
                             hitItem = true;
                         }
@@ -363,31 +382,146 @@ void handleTouch() {
                 }
             }
         }
-    } else if (drawMode == MODE_OBSTACLE) {
+    } else if (drawMode == MODE_WOOD) {
         for (int dy = -OBSTACLE_BRUSH; dy <= OBSTACLE_BRUSH; dy++) {
             for (int dx = -OBSTACLE_BRUSH; dx <= OBSTACLE_BRUSH; dx++) {
                 int nx = gx + dx;
                 int ny = gy + dy;
                 if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H
-                    && grid[ny][nx] != OBSTACLE_VAL && grid[ny][nx] != FIXED_VAL) {
-                    grid[ny][nx] = OBSTACLE_VAL;
-                    drawCell(nx, ny, OBSTACLE_VAL);
+                    && grid[ny][nx] != WOOD_VAL && grid[ny][nx] != FIXED_VAL) {
+                    grid[ny][nx] = WOOD_VAL;
+                    drawCell(nx, ny, WOOD_VAL);
                 }
             }
         }
-    } else { // MODE_OBSTACLE_ERASE
+    } else if (drawMode == MODE_FIRE) {
         for (int dy = -OBSTACLE_BRUSH; dy <= OBSTACLE_BRUSH; dy++) {
             for (int dx = -OBSTACLE_BRUSH; dx <= OBSTACLE_BRUSH; dx++) {
                 int nx = gx + dx;
                 int ny = gy + dy;
                 if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H
-                    && grid[ny][nx] == OBSTACLE_VAL) {
+                    && grid[ny][nx] != FIXED_VAL) {
+                    grid[ny][nx] = FIRE_SRC;
+                    drawCell(nx, ny, FIRE_SRC);
+                }
+            }
+        }
+    } else { // MODE_ERASE
+        for (int dy = -OBSTACLE_BRUSH; dy <= OBSTACLE_BRUSH; dy++) {
+            for (int dx = -OBSTACLE_BRUSH; dx <= OBSTACLE_BRUSH; dx++) {
+                int nx = gx + dx;
+                int ny = gy + dy;
+                if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H
+                    && grid[ny][nx] != FIXED_VAL && grid[ny][nx] != 0) {
                     grid[ny][nx] = 0;
                     drawCell(nx, ny, 0);
                 }
             }
         }
     }
+}
+
+// --- Fire physics ---
+void simulateFire() {
+    // Anti-gravity direction: opposite of primaryDir
+    int antiDir = (primaryDir + 4) % 8;
+    int adx = DIR_DX[antiDir];
+    int ady = DIR_DY[antiDir];
+    // Two diagonal slides for the anti-gravity direction
+    int as1 = (antiDir + 1) % 8;
+    int as2 = (antiDir + 7) % 8;
+
+    tft.startWrite();
+
+    // Process top-to-bottom if fire rises upward, bottom-to-top otherwise,
+    // so particles don't move twice in the same frame.
+    int yStart, yEnd, yStep;
+    if (ady < 0) { yStart = 0;          yEnd = GRID_H; yStep =  1; }
+    else          { yStart = GRID_H - 1; yEnd = -1;     yStep = -1; }
+
+    int xStart, xEnd, xStep;
+    if (adx > 0)      { xStart = GRID_W - 1; xEnd = -1;     xStep = -1; }
+    else if (adx < 0) { xStart = 0;          xEnd = GRID_W; xStep =  1; }
+    else {
+        if (random(2)) { xStart = 0; xEnd = GRID_W; xStep = 1; }
+        else           { xStart = GRID_W - 1; xEnd = -1; xStep = -1; }
+    }
+
+    for (int y = yStart; y != yEnd; y += yStep) {
+        for (int x = xStart; x != xEnd; x += xStep) {
+            uint8_t val = grid[y][x];
+
+            // --- FIRE_SRC: emit particles + probabilistic extinction ---
+            if (val == FIRE_SRC) {
+                // ~0.5% chance to die
+                if (random(1000) < 5) {
+                    grid[y][x] = 0;
+                    drawCell(x, y, 0);
+                    continue;
+                }
+                // ~40% chance to emit a particle in anti-gravity cell
+                if (random(100) < 40) {
+                    int ex = x + adx, ey = y + ady;
+                    if (ex >= 0 && ex < GRID_W && ey >= 0 && ey < GRID_H && grid[ey][ex] == 0) {
+                        uint8_t fp = FIRE_MIN + random(FIRE_MAX - FIRE_MIN + 1);
+                        grid[ey][ex] = fp;
+                        drawCell(ex, ey, fp);
+                    }
+                }
+                continue;
+            }
+
+            // --- Fire particles: ignite wood, move, die ---
+            if (val < FIRE_MIN || val > FIRE_MAX) continue;
+
+            // ~2-3% chance to die
+            if (random(100) < 3) {
+                grid[y][x] = 0;
+                drawCell(x, y, 0);
+                continue;
+            }
+
+            // Ignite adjacent wood (4 orthogonal neighbors)
+            const int8_t ox[] = { 0,  0,  1, -1};
+            const int8_t oy[] = {-1,  1,  0,  0};
+            for (int n = 0; n < 4; n++) {
+                int wx = x + ox[n], wy = y + oy[n];
+                if (wx >= 0 && wx < GRID_W && wy >= 0 && wy < GRID_H
+                    && grid[wy][wx] == WOOD_VAL) {
+                    grid[wy][wx] = FIRE_SRC;
+                    drawCell(wx, wy, FIRE_SRC);
+                }
+            }
+
+            // Move in anti-gravity direction
+            int nx = x + adx, ny = y + ady;
+            if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && grid[ny][nx] == 0) {
+                grid[ny][nx] = val; grid[y][x] = 0;
+                drawCell(x, y, 0); drawCell(nx, ny, val);
+                continue;
+            }
+
+            // Diagonal slides
+            int s1 = as1, s2 = as2;
+            if (random(2)) { s1 = as2; s2 = as1; }
+
+            nx = x + DIR_DX[s1]; ny = y + DIR_DY[s1];
+            if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && grid[ny][nx] == 0) {
+                grid[ny][nx] = val; grid[y][x] = 0;
+                drawCell(x, y, 0); drawCell(nx, ny, val);
+                continue;
+            }
+
+            nx = x + DIR_DX[s2]; ny = y + DIR_DY[s2];
+            if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && grid[ny][nx] == 0) {
+                grid[ny][nx] = val; grid[y][x] = 0;
+                drawCell(x, y, 0); drawCell(nx, ny, val);
+                continue;
+            }
+        }
+    }
+
+    tft.endWrite();
 }
 
 // --- Liquid physics ---
@@ -516,4 +650,5 @@ void loop() {
     updateGravityDir();
     handleTouch();
     simulateSand();
+    simulateFire();
 }
