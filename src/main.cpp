@@ -42,12 +42,17 @@
 #define MENU_BTN_W    28
 #define MENU_BTN_H    28
 
-// Menu panel items (shown below hamburger when open)
-#define MENU_PANEL_X  2
-#define MENU_PANEL_Y  (MENU_BTN_Y + MENU_BTN_H + 4)
-#define MENU_ITEM_W   90
-#define MENU_ITEM_H   24
-#define MENU_ITEM_GAP 3
+// Menu panel (centered overlay, 4 items)
+#define MENU_PANEL_W        180
+#define MENU_PANEL_PADDING  10
+#define MENU_TITLE_H        22
+#define MENU_ITEM_W         (MENU_PANEL_W - MENU_PANEL_PADDING * 2)
+#define MENU_ITEM_H         34
+#define MENU_ITEM_GAP       6
+#define NUM_MENU_ITEMS      4
+#define MENU_PANEL_H        (MENU_PANEL_PADDING * 2 + MENU_TITLE_H + NUM_MENU_ITEMS * MENU_ITEM_H + (NUM_MENU_ITEMS - 1) * MENU_ITEM_GAP)
+#define MENU_PANEL_X        ((SCREEN_W - MENU_PANEL_W) / 2)
+#define MENU_PANEL_Y        ((SCREEN_H - MENU_PANEL_H) / 2)
 
 // --- Objects ---
 TFT_eSPI tft;
@@ -153,33 +158,60 @@ void drawMenuButton() {
     tft.drawFastHLine(lx, MENU_BTN_Y + 20, lw, TFT_WHITE);
 }
 
-// --- UI: Menu panel (4 items) ---
+// --- UI: Menu panel (centered overlay) ---
 void drawMenuPanel() {
-    static const char* labels[] = { "Sand", "Clear", "Wall", "Erase" };
-    static const uint16_t bgs[] = { SAND_COLORS[0], SAND_COLORS[0], OBSTACLE_COLOR, OBSTACLE_COLOR };
-    for (int i = 0; i < 4; i++) {
-        int iy = MENU_PANEL_Y + i * (MENU_ITEM_H + MENU_ITEM_GAP);
+    static const char* labels[]      = { "Sable", "Effacer", "Mur", "Gomme" };
+    static const uint16_t btnColors[] = {
+        RGB565(180, 140,  55),  // sand – warm yellow
+        RGB565(150,  45,  45),  // clear – red
+        RGB565( 55,  85, 115),  // wall  – steel blue
+        RGB565( 75,  55,  95),  // erase – purple-grey
+    };
+
+    // Panel background + double border
+    tft.fillRect(MENU_PANEL_X, MENU_PANEL_Y, MENU_PANEL_W, MENU_PANEL_H, RGB565(20, 20, 30));
+    tft.drawRect(MENU_PANEL_X,     MENU_PANEL_Y,     MENU_PANEL_W,     MENU_PANEL_H,     TFT_WHITE);
+    tft.drawRect(MENU_PANEL_X + 2, MENU_PANEL_Y + 2, MENU_PANEL_W - 4, MENU_PANEL_H - 4, RGB565(70, 70, 110));
+
+    // Title
+    const char* title = "MENU";
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_WHITE, RGB565(20, 20, 30));
+    int tx = MENU_PANEL_X + (MENU_PANEL_W - (int)strlen(title) * 6) / 2;
+    tft.setCursor(tx, MENU_PANEL_Y + MENU_PANEL_PADDING);
+    tft.print(title);
+
+    // Separator
+    tft.drawFastHLine(MENU_PANEL_X + 6, MENU_PANEL_Y + MENU_PANEL_PADDING + 12,
+                      MENU_PANEL_W - 12, RGB565(70, 70, 110));
+
+    // Buttons
+    int itemX  = MENU_PANEL_X + MENU_PANEL_PADDING;
+    int itemY0 = MENU_PANEL_Y + MENU_PANEL_PADDING + MENU_TITLE_H;
+
+    for (int i = 0; i < NUM_MENU_ITEMS; i++) {
+        int iy = itemY0 + i * (MENU_ITEM_H + MENU_ITEM_GAP);
         bool active = (i == 0 && drawMode == MODE_SAND)
                    || (i == 2 && drawMode == MODE_OBSTACLE)
                    || (i == 3 && drawMode == MODE_OBSTACLE_ERASE);
-        uint16_t border = active ? TFT_WHITE : TFT_DARKGREY;
-        tft.fillRect(MENU_PANEL_X + 1, iy + 1, MENU_ITEM_W - 2, MENU_ITEM_H - 2, bgs[i]);
-        tft.drawRect(MENU_PANEL_X, iy, MENU_ITEM_W, MENU_ITEM_H, border);
-        if (i == 1) {
-            tft.drawLine(MENU_PANEL_X + 4, iy + 4, MENU_PANEL_X + MENU_ITEM_W - 5, iy + MENU_ITEM_H - 5, TFT_BLACK);
-            tft.drawLine(MENU_PANEL_X + MENU_ITEM_W - 5, iy + 4, MENU_PANEL_X + 4, iy + MENU_ITEM_H - 5, TFT_BLACK);
-        } else if (i == 3) {
-            tft.drawLine(MENU_PANEL_X + 4, iy + 4, MENU_PANEL_X + MENU_ITEM_W - 5, iy + MENU_ITEM_H - 5, TFT_WHITE);
-            tft.drawLine(MENU_PANEL_X + MENU_ITEM_W - 5, iy + 4, MENU_PANEL_X + 4, iy + MENU_ITEM_H - 5, TFT_WHITE);
+
+        tft.fillRect(itemX, iy, MENU_ITEM_W, MENU_ITEM_H, btnColors[i]);
+        // Border: double border when active
+        uint16_t borderCol = active ? TFT_WHITE : RGB565(110, 110, 140);
+        tft.drawRect(itemX, iy, MENU_ITEM_W, MENU_ITEM_H, borderCol);
+        if (active) {
+            tft.drawRect(itemX + 1, iy + 1, MENU_ITEM_W - 2, MENU_ITEM_H - 2, borderCol);
         }
-        uint16_t textColor = (bgs[i] == OBSTACLE_COLOR) ? TFT_WHITE : TFT_BLACK;
-        tft.setTextColor(textColor, bgs[i]);
-        tft.setTextSize(1);
-        int tx = MENU_PANEL_X + (MENU_ITEM_W - (int)strlen(labels[i]) * 6) / 2;
-        int ty = iy + (MENU_ITEM_H - 8) / 2;
-        tft.setCursor(tx, ty);
+
+        // Label centered, size 2 (12×16 px per char)
+        tft.setTextSize(2);
+        tft.setTextColor(TFT_WHITE, btnColors[i]);
+        int lx = itemX + (MENU_ITEM_W - (int)strlen(labels[i]) * 12) / 2;
+        int ly = iy    + (MENU_ITEM_H - 16) / 2;
+        tft.setCursor(lx, ly);
         tft.print(labels[i]);
     }
+    tft.setTextSize(1); // restore
 }
 
 // Close menu and restore grid cells that were painted over
@@ -187,8 +219,8 @@ void closeMenu() {
     menuOpen = false;
     int gx0 = MENU_PANEL_X / CELL_SIZE;
     int gy0 = MENU_PANEL_Y / CELL_SIZE;
-    int gx1 = (MENU_PANEL_X + MENU_ITEM_W) / CELL_SIZE + 1;
-    int gy1 = (MENU_PANEL_Y + 4 * (MENU_ITEM_H + MENU_ITEM_GAP)) / CELL_SIZE + 1;
+    int gx1 = (MENU_PANEL_X + MENU_PANEL_W) / CELL_SIZE + 1;
+    int gy1 = (MENU_PANEL_Y + MENU_PANEL_H) / CELL_SIZE + 1;
     if (gx1 >= GRID_W) gx1 = GRID_W - 1;
     if (gy1 >= GRID_H) gy1 = GRID_H - 1;
     tft.startWrite();
@@ -273,32 +305,39 @@ void handleTouch() {
             touchIsButton = true;
         } else if (menuOpen) {
             bool hitItem = false;
-            if (sx >= MENU_PANEL_X && sx < MENU_PANEL_X + MENU_ITEM_W) {
-                for (int i = 0; i < 4 && !hitItem; i++) {
-                    int iy = MENU_PANEL_Y + i * (MENU_ITEM_H + MENU_ITEM_GAP);
-                    if (sy >= iy && sy < iy + MENU_ITEM_H) {
-                        if (i == 0) {
-                            drawMode = MODE_SAND;
-                            closeMenu();
-                        } else if (i == 1) {
-                            memset(grid, 0, sizeof(grid));
-                            markButtonZone();
-                            tft.fillScreen(BG_COLOR);
-                            menuOpen = false;
-                            drawMenuButton();
-                        } else if (i == 2) {
-                            drawMode = MODE_OBSTACLE;
-                            closeMenu();
-                        } else {
-                            drawMode = MODE_OBSTACLE_ERASE;
-                            closeMenu();
+            int itemX  = MENU_PANEL_X + MENU_PANEL_PADDING;
+            int itemY0 = MENU_PANEL_Y + MENU_PANEL_PADDING + MENU_TITLE_H;
+            if (sx >= MENU_PANEL_X && sx < MENU_PANEL_X + MENU_PANEL_W &&
+                sy >= MENU_PANEL_Y && sy < MENU_PANEL_Y + MENU_PANEL_H) {
+                if (sx >= itemX && sx < itemX + MENU_ITEM_W) {
+                    for (int i = 0; i < NUM_MENU_ITEMS && !hitItem; i++) {
+                        int iy = itemY0 + i * (MENU_ITEM_H + MENU_ITEM_GAP);
+                        if (sy >= iy && sy < iy + MENU_ITEM_H) {
+                            if (i == 0) {
+                                drawMode = MODE_SAND;
+                                closeMenu();
+                            } else if (i == 1) {
+                                memset(grid, 0, sizeof(grid));
+                                markButtonZone();
+                                tft.fillScreen(BG_COLOR);
+                                menuOpen = false;
+                                drawMenuButton();
+                            } else if (i == 2) {
+                                drawMode = MODE_OBSTACLE;
+                                closeMenu();
+                            } else if (i == 3) {
+                                drawMode = MODE_OBSTACLE_ERASE;
+                                closeMenu();
+                            }
+                            hitItem = true;
                         }
-                        hitItem = true;
                     }
                 }
+                if (!hitItem) closeMenu(); // tap inside panel but not on a button
+            } else {
+                closeMenu(); // tap outside panel
             }
-            if (!hitItem) closeMenu();  // tap outside menu closes it
-            touchIsButton = true;       // consume touch regardless
+            touchIsButton = true;
         }
         wasTouched = true;
     }
