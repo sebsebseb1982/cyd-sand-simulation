@@ -94,7 +94,7 @@ const uint16_t SAND_COLORS[] = {
 #define FIRE_MIN        8   // Fire particle (variants 8-11)
 #define FIRE_MAX        11
 
-#define WOOD_COLOR      RGB565(163, 101,   0)  // #a36500
+#define WOOD_COLOR      RGB565(32, 28,   0) 
 #define FIRE_SRC_COLOR  RGB565(255,  47,   0)  // #ff2f00
 const uint16_t FIRE_COLORS[] = {
     RGB565(255,  47,   0),  // base red    #ff2f00
@@ -425,18 +425,18 @@ void handleTouch() {
 
 // --- Fire physics ---
 void simulateFire() {
-    // Anti-gravity direction: opposite of primaryDir
+    // Continuous anti-gravity angle — same blending technique as sand, direction inverted
+    float antiGravAngle = atan2f(-gravX, -gravY);
+    float sectorF  = antiGravAngle / (M_PI / 4.0f);
+    int   dirFloor = (((int)floorf(sectorF)) % 8 + 8) % 8;
+    int   dirCeil  = (dirFloor + 1) % 8;
+    int   blendT   = (int)((sectorF - floorf(sectorF)) * 256.0f); // 0..255
+
+    // Traversal order: opposite of rise direction so particles move at most once per frame
     int antiDir = (primaryDir + 4) % 8;
     int adx = DIR_DX[antiDir];
     int ady = DIR_DY[antiDir];
-    // Two diagonal slides for the anti-gravity direction
-    int as1 = (antiDir + 1) % 8;
-    int as2 = (antiDir + 7) % 8;
 
-    tft.startWrite();
-
-    // Process top-to-bottom if fire rises upward, bottom-to-top otherwise,
-    // so particles don't move twice in the same frame.
     int yStart, yEnd, yStep;
     if (ady < 0) { yStart = 0;          yEnd = GRID_H; yStep =  1; }
     else          { yStart = GRID_H - 1; yEnd = -1;     yStep = -1; }
@@ -449,11 +449,13 @@ void simulateFire() {
         else           { xStart = GRID_W - 1; xEnd = -1; xStep = -1; }
     }
 
+    tft.startWrite();
+
     for (int y = yStart; y != yEnd; y += yStep) {
         for (int x = xStart; x != xEnd; x += xStep) {
             uint8_t val = grid[y][x];
 
-            // --- FIRE_SRC: emit particles + probabilistic extinction ---
+            // --- FIRE_SRC: emit particles + spread to adjacent wood + probabilistic extinction ---
             if (val == FIRE_SRC) {
                 // ~0.5% chance to die
                 if (random(1000) < 5) {
@@ -461,13 +463,25 @@ void simulateFire() {
                     drawCell(x, y, 0);
                     continue;
                 }
-                // ~40% chance to emit a particle in anti-gravity cell
+                // ~40% chance to emit a particle using continuous anti-gravity direction
                 if (random(100) < 40) {
-                    int ex = x + adx, ey = y + ady;
+                    int emitDir = ((int)random(256) < blendT) ? dirCeil : dirFloor;
+                    int ex = x + DIR_DX[emitDir], ey = y + DIR_DY[emitDir];
                     if (ex >= 0 && ex < GRID_W && ey >= 0 && ey < GRID_H && grid[ey][ex] == 0) {
                         uint8_t fp = FIRE_MIN + random(FIRE_MAX - FIRE_MIN + 1);
                         grid[ey][ex] = fp;
                         drawCell(ex, ey, fp);
+                    }
+                }
+                // Spread to adjacent wood — FIRE_SRC is the main propagation vector (now 3% per tick)
+                const int8_t ox[] = { 0,  0,  1, -1};
+                const int8_t oy[] = {-1,  1,  0,  0};
+                for (int n = 0; n < 4; n++) {
+                    int wx = x + ox[n], wy = y + oy[n];
+                    if (wx >= 0 && wx < GRID_W && wy >= 0 && wy < GRID_H
+                        && grid[wy][wx] == WOOD_VAL && random(100) < 3) {
+                        grid[wy][wx] = FIRE_SRC;
+                        drawCell(wx, wy, FIRE_SRC);
                     }
                 }
                 continue;
@@ -476,36 +490,39 @@ void simulateFire() {
             // --- Fire particles: ignite wood, move, die ---
             if (val < FIRE_MIN || val > FIRE_MAX) continue;
 
-            // ~2-3% chance to die
-            if (random(100) < 3) {
+            // 15% chance to die per frame → particles travel only a few cells
+            if (random(100) < 15) {
                 grid[y][x] = 0;
                 drawCell(x, y, 0);
                 continue;
             }
 
-            // Ignite adjacent wood (4 orthogonal neighbors)
+            // Particles can also ignite wood but at very low probability (1%)
             const int8_t ox[] = { 0,  0,  1, -1};
             const int8_t oy[] = {-1,  1,  0,  0};
             for (int n = 0; n < 4; n++) {
                 int wx = x + ox[n], wy = y + oy[n];
                 if (wx >= 0 && wx < GRID_W && wy >= 0 && wy < GRID_H
-                    && grid[wy][wx] == WOOD_VAL) {
+                    && grid[wy][wx] == WOOD_VAL && random(100) < 1) {
                     grid[wy][wx] = FIRE_SRC;
                     drawCell(wx, wy, FIRE_SRC);
                 }
             }
 
-            // Move in anti-gravity direction
-            int nx = x + adx, ny = y + ady;
+            // Per-particle stochastic rise direction (continuous, not clamped to 8 dirs)
+            int riseDir = ((int)random(256) < blendT) ? dirCeil : dirFloor;
+            int rdx = DIR_DX[riseDir], rdy = DIR_DY[riseDir];
+            int rs1 = (riseDir + 1) % 8, rs2 = (riseDir + 7) % 8;
+
+            int nx = x + rdx, ny = y + rdy;
             if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && grid[ny][nx] == 0) {
                 grid[ny][nx] = val; grid[y][x] = 0;
                 drawCell(x, y, 0); drawCell(nx, ny, val);
                 continue;
             }
 
-            // Diagonal slides
-            int s1 = as1, s2 = as2;
-            if (random(2)) { s1 = as2; s2 = as1; }
+            int s1 = rs1, s2 = rs2;
+            if (random(2)) { s1 = rs2; s2 = rs1; }
 
             nx = x + DIR_DX[s1]; ny = y + DIR_DY[s1];
             if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && grid[ny][nx] == 0) {
